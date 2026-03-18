@@ -2,59 +2,93 @@ package checker
 
 import (
 	"fmt"
-	"go/ast"
-	"go/token"
+
+	sitter "github.com/smacker/go-tree-sitter"
+	"llm-bouncer/language"
 )
 
 const maxCyclomaticComplexity = 10
 
-func checkCyclomaticComplexity(fileSet *token.FileSet, file *ast.File) []Violation {
+func checkCyclomaticComplexity(root *sitter.Node, src []byte, lang *language.LanguageConfig) []Violation {
 	var violations []Violation
 
-	for _, declaration := range file.Decls {
-		funcDecl, ok := declaration.(*ast.FuncDecl)
-		if !ok || funcDecl.Body == nil {
-			continue
+	funcTypes := nodeTypeSet(lang.FunctionNodeTypes)
+
+	walk(root, func(n *sitter.Node) bool {
+		if !funcTypes[n.Type()] {
+			return true
 		}
 
-		complexity := calculateComplexity(funcDecl)
+		// Skip nested functions (they get their own score).
+		if isNestedFunction(n, funcTypes) {
+			return false
+		}
+
+		name := functionName(n, src, lang)
+		complexity := calculateComplexity(n, src, lang, funcTypes)
+
 		if complexity > maxCyclomaticComplexity {
 			violations = append(violations, Violation{
-				Line: fileSet.Position(funcDecl.Pos()).Line,
+				Line: startLine(n),
 				Rule: "cyclomatic-complexity",
 				Message: fmt.Sprintf(
 					"function %q has complexity %d (max %d); break into smaller functions",
-					funcDecl.Name.Name, complexity, maxCyclomaticComplexity,
+					name, complexity, maxCyclomaticComplexity,
 				),
 			})
 		}
-	}
+
+		// Don't recurse into function body again (nested functions handled separately).
+		return false
+	})
 
 	return violations
 }
 
+func isNestedFunction(n *sitter.Node, funcTypes map[string]bool) bool {
+	for p := n.Parent(); p != nil; p = p.Parent() {
+		if funcTypes[p.Type()] {
+			return true
+		}
+	}
+	return false
+}
+
+func functionName(n *sitter.Node, src []byte, lang *language.LanguageConfig) string {
+	if nameNode := n.ChildByFieldName(lang.FunctionNameField); nameNode != nil {
+		return nodeText(nameNode, src)
+	}
+	return "<anonymous>"
+}
+
 // calculateComplexity counts decision points using McCabe's formula.
-func calculateComplexity(funcDecl *ast.FuncDecl) int {
+func calculateComplexity(funcNode *sitter.Node, src []byte, lang *language.LanguageConfig, funcTypes map[string]bool) int {
 	complexity := 1
 
-	ast.Inspect(funcDecl.Body, func(node ast.Node) bool {
-		switch typedNode := node.(type) {
-		case *ast.IfStmt, *ast.ForStmt, *ast.RangeStmt:
+	complexityTypes := nodeTypeSet(lang.ComplexityNodeTypes)
+	boolOps := nodeTypeSet(lang.BooleanOperators)
+
+	walk(funcNode, func(n *sitter.Node) bool {
+		// Skip nested functions.
+		if n != funcNode && funcTypes[n.Type()] {
+			return false
+		}
+
+		if complexityTypes[n.Type()] {
 			complexity++
-		case *ast.CaseClause:
-			if typedNode.List != nil {
-				complexity++
-			}
-		case *ast.CommClause:
-			if typedNode.Comm != nil {
-				complexity++
-			}
-		case *ast.BinaryExpr:
-			operator := typedNode.Op.String()
-			if operator == "&&" || operator == "||" {
-				complexity++
+		}
+
+		// Count boolean operators in binary expressions.
+		if n.Type() == lang.BinaryExprNodeType {
+			for i := 0; i < int(n.ChildCount()); i++ {
+				child := n.Child(i)
+				text := nodeText(child, src)
+				if boolOps[text] {
+					complexity++
+				}
 			}
 		}
+
 		return true
 	})
 

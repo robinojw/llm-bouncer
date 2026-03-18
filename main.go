@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"llm-bouncer/checker"
+	"llm-bouncer/language"
 )
 
 type HookInput struct {
@@ -35,7 +36,7 @@ func main() {
 		os.Exit(0)
 	}
 
-	if filePath == "" || !strings.HasSuffix(filePath, ".go") {
+	if filePath == "" || !language.Supported(filePath) {
 		os.Exit(0)
 	}
 

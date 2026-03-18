@@ -5,21 +5,20 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"regexp"
+
+	"llm-bouncer/language"
 )
 
 const (
 	MaxFileLines = 300
 )
 
-var snakeCasePattern = regexp.MustCompile(`^[a-z][a-z0-9]*(_[a-z0-9]+)*\.go$`)
-
-func checkFileName(filePath string) []Violation {
+func checkFileName(filePath string, lang *language.LanguageConfig) []Violation {
 	base := filepath.Base(filePath)
-	if !snakeCasePattern.MatchString(base) {
+	if lang.FileNameRegex != nil && !lang.FileNameRegex.MatchString(base) {
 		return []Violation{{
 			Rule:    "file-naming",
-			Message: fmt.Sprintf("%q must use snake_case (e.g. my_handler.go)", base),
+			Message: fmt.Sprintf("%q does not match %s naming convention", base, lang.Name),
 		}}
 	}
 	return nil

@@ -3,39 +3,66 @@
 
 # llm-bouncer
 
-A code quality gate for AI coding agents. Hooks into [Claude Code](https://docs.anthropic.com/en/docs/claude-code) and [Codex CLI](https://github.com/openai/codex) to catch Go style violations **before** they land, forcing the agent to fix its own output.
+A **language-agnostic** code quality gate for AI coding agents. Hooks into [Claude Code](https://docs.anthropic.com/en/docs/claude-code) and [Codex CLI](https://github.com/openai/codex) to catch style violations **before** they land, forcing the agent to fix its own output.
+
+## Supported languages
+
+| Language | File extensions | Naming convention |
+|---|---|---|
+| Go | `.go` | `snake_case.go` |
+| Python | `.py` | `snake_case.py` |
+| TypeScript | `.ts`, `.tsx` | `kebab-case.ts` |
+| JavaScript | `.js`, `.jsx` | `kebab-case.js` |
+| Rust | `.rs` | `snake_case.rs` |
+| Java | `.java` | `PascalCase.java` |
+
+Powered by [tree-sitter](https://tree-sitter.github.io/) for universal AST parsing.
 
 ## How it works
 
-When Claude Code writes or edits a `.go` file, the `PostToolUse` hook pipes the event to the `llm-bouncer` binary. If violations are found, it returns `{"decision": "block", "reason": "..."}` and Claude must fix the issues before continuing.
+When Claude Code writes or edits a supported file, the `PostToolUse` hook pipes the event to the `llm-bouncer` binary. If violations are found, it returns `{"decision": "block", "reason": "..."}` and Claude must fix the issues before continuing.
 
 For Codex CLI (which lacks native hook support), a wrapper script diffs changed files after each run.
 
 ## Rules
 
-| Rule | What it catches |
-|---|---|
-| `naming` | Single-letter variables (except `i`, `j`, `k`, `_`, and method receivers) |
-| `no-nested-ifs` | `if` inside `if` — use early returns or extract a helper |
-| `no-inline-booleans` | `&&` / `\|\|` directly in `if` conditions — assign to a named variable |
-| `no-inline-comments` | Comments on the same line as code — write self-documenting code |
-| `no-repeated-strings` | Same string literal used more than once — extract to a constant |
-| `no-magic-numbers` | Numeric literals (except `0` and `1`) outside `const` blocks |
-| `cyclomatic-complexity` | Functions exceeding complexity threshold (default 10) |
-| `file-size` | Files exceeding line limit (default 300) |
-| `file-naming` | Filenames that aren't `snake_case.go` |
+| Rule | What it catches | Language notes |
+|---|---|---|
+| `naming` | Single-letter variables (except `i`, `j`, `k`, `_`) | Python also allows `self`, `cls`; Go excludes method receivers |
+| `no-nested-ifs` | `if` inside `if` — use early returns or extract a helper | Rust uses `if_expression` |
+| `no-inline-booleans` | `&&`/`\|\|`/`and`/`or` directly in `if` conditions | Python uses `and`/`or` keywords |
+| `no-inline-comments` | Comments on the same line as code | All comment syntaxes: `//`, `#`, `/* */` |
+| `no-repeated-strings` | Same string literal used more than once | Includes template strings for JS/TS |
+| `no-magic-numbers` | Numeric literals (except `0` and `1`) outside constants | Go: `const` block, JS/TS: `const` keyword, Python: `UPPER_SNAKE_CASE`, Java: `final` |
+| `cyclomatic-complexity` | Functions exceeding complexity threshold (default 10) | Counts `if`, loops, cases, `&&`/`\|\|` |
+| `file-size` | Files exceeding line limit (default 300) | |
+| `file-naming` | Filenames violating language convention | See table above |
 
 ## Quick start
 
-### 1. Build
+### One-liner install
+
+From your project directory:
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/robinojw/llm-bouncer/main/install.sh)
+```
+
+This builds the binary, copies it to `.claude/hooks/llm-bouncer/`, and patches your `.claude/settings.json`.
+
+**Requires:** Go 1.21+, git, python3, and a C compiler (CGO is required for tree-sitter).
+
+### Manual install
+
+#### 1. Build
 
 ```bash
 git clone https://github.com/robinojw/llm-bouncer.git
 cd llm-bouncer
-go build -o llm-bouncer .
+CGO_ENABLED=1 go build -o llm-bouncer .
 ```
 
-### 2. Install for Claude Code
+#### 2. Install for Claude Code
 
 Copy the binary into your project's hook directory:
 
@@ -64,7 +91,7 @@ Add the hook to your project's `.claude/settings.json`:
 }
 ```
 
-### 3. Install for Codex CLI
+#### 3. Install for Codex CLI
 
 Use the wrapper script instead of calling `codex` directly:
 
@@ -80,10 +107,11 @@ See [openai/codex#7396](https://github.com/openai/codex/issues/7396) for native 
 
 ## Standalone usage
 
-Run directly against any Go file:
+Run directly against any supported file:
 
 ```bash
-./llm-bouncer path/to/file.go
+./llm-bouncer path/to/file.py
+./llm-bouncer path/to/component.tsx
 ```
 
 Returns JSON on stdout when violations are found, exits silently when clean.
@@ -102,12 +130,21 @@ The defaults are conservative. Adjust these constants in the source to match you
 ```
 .
 ├── main.go              # Hook entry point — reads stdin JSON or CLI args
+├── language/
+│   ├── language.go      # LanguageConfig type, Detect(), registry
+│   ├── go.go            # Go config
+│   ├── python.go        # Python config
+│   ├── typescript.go    # TypeScript config
+│   ├── javascript.go    # JavaScript config
+│   ├── rust.go          # Rust config
+│   └── java.go          # Java config
 ├── checker/
-│   ├── checker.go       # Violation type and CheckFile orchestrator
+│   ├── checker.go       # Violation type, tree-sitter parsing, walk helpers
 │   ├── complexity.go    # Cyclomatic complexity check
 │   ├── files.go         # File size and naming checks
 │   ├── naming.go        # Variable and parameter naming checks
 │   └── style.go         # Nested ifs, inline booleans, comments, strings, magic numbers
+├── install.sh           # One-command installer
 ├── codex-lint.sh        # Codex CLI wrapper script
 └── go.mod
 ```
