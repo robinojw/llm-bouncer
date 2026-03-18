@@ -11,7 +11,7 @@ func init() {
 		Name:           "JavaScript",
 		Language:       javascript.GetLanguage(),
 		FileExtensions: []string{".js", ".jsx"},
-		FileNameRegex:  regexp.MustCompile(`^[a-z][a-z0-9]*(-[a-z0-9]+)*\.(js|jsx)$`),
+		FileNameRegex:  regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9]*([.-][a-zA-Z0-9]+)*\.(js|jsx)$`),
 
 		FunctionNodeTypes: []string{"function_declaration", "arrow_function", "method_definition"},
 		FunctionNameField: "name",

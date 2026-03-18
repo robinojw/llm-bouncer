@@ -11,7 +11,7 @@ func init() {
 		Name:           "TypeScript",
 		Language:       typescript.GetLanguage(),
 		FileExtensions: []string{".ts", ".tsx"},
-		FileNameRegex:  regexp.MustCompile(`^[a-z][a-z0-9]*(-[a-z0-9]+)*\.(ts|tsx)$`),
+		FileNameRegex:  regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9]*([.-][a-zA-Z0-9]+)*\.(ts|tsx)$`),
 
 		FunctionNodeTypes: []string{"function_declaration", "arrow_function", "method_definition"},
 		FunctionNameField: "name",
