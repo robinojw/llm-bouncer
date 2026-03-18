@@ -18,6 +18,8 @@ const (
 	ConstByKeyword
 	// ConstByConvention means UPPER_SNAKE_CASE names are treated as constants (Python).
 	ConstByConvention
+	// ConstByBindingKeyword means a binding keyword marks immutability (Kotlin: val, Swift: let).
+	ConstByBindingKeyword
 )
 
 // LanguageConfig maps language concepts to tree-sitter node types.
@@ -32,15 +34,18 @@ type LanguageConfig struct {
 
 	VariableNodeTypes  []string
 	ParameterNodeTypes []string
+	IdentifierNodeTypes []string // Defaults to ["identifier"] if empty; Kotlin/Swift use ["simple_identifier"]
 	AcceptableShortNames map[string]bool
 	ReceiverNodeType     string // Go-specific; empty for other languages
 
-	IfNodeTypes []string
-	IfBodyField string
+	IfNodeTypes    []string
+	IfBodyField    string   // Named field for if body (e.g., "consequence", "body")
+	IfBodyNodeTypes []string // Fallback: child node types that represent the if body (e.g., "control_structure_body")
 
-	ComplexityNodeTypes []string
+	ComplexityNodeTypes  []string
 	BooleanOperators    []string
 	BinaryExprNodeType  string
+	BooleanExprNodeTypes []string // Node types that ARE boolean expressions (Kotlin/Swift: conjunction_expression, disjunction_expression)
 
 	StringNodeTypes  []string
 	NumberNodeTypes  []string
@@ -69,4 +74,12 @@ func Detect(filePath string) *LanguageConfig {
 // Supported returns true if the file extension is supported.
 func Supported(filePath string) bool {
 	return Detect(filePath) != nil
+}
+
+// IdentTypes returns the identifier node types, defaulting to ["identifier"].
+func (c *LanguageConfig) IdentTypes() []string {
+	if len(c.IdentifierNodeTypes) > 0 {
+		return c.IdentifierNodeTypes
+	}
+	return []string{"identifier"}
 }

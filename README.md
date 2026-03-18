@@ -15,6 +15,8 @@ A **language-agnostic** code quality gate for AI coding agents. Hooks into [Clau
 | JavaScript | `.js`, `.jsx` | `kebab-case.js` |
 | Rust | `.rs` | `snake_case.rs` |
 | Java | `.java` | `PascalCase.java` |
+| Kotlin | `.kt`, `.kts` | `PascalCase.kt`, `camelCase.kt` |
+| Swift | `.swift` | `PascalCase.swift`, `Type+Extension.swift` |
 
 Powered by [tree-sitter](https://tree-sitter.github.io/) for universal AST parsing.
 
@@ -33,7 +35,7 @@ For Codex CLI (which lacks native hook support), a wrapper script diffs changed 
 | `no-inline-booleans` | `&&`/`\|\|`/`and`/`or` directly in `if` conditions | Python uses `and`/`or` keywords |
 | `no-inline-comments` | Comments on the same line as code | All comment syntaxes: `//`, `#`, `/* */` |
 | `no-repeated-strings` | Same string literal used more than once | Includes template strings for JS/TS |
-| `no-magic-numbers` | Numeric literals (except `0` and `1`) outside constants | Go: `const` block, JS/TS: `const` keyword, Python: `UPPER_SNAKE_CASE`, Java: `final` |
+| `no-magic-numbers` | Numeric literals (except `0` and `1`) outside constants | Go: `const` block, JS/TS: `const` keyword, Python: `UPPER_SNAKE_CASE`, Java: `final`, Kotlin: `val`, Swift: `let` |
 | `cyclomatic-complexity` | Functions exceeding complexity threshold (default 10) | Counts `if`, loops, cases, `&&`/`\|\|` |
 | `file-size` | Files exceeding line limit (default 300) | |
 | `file-naming` | Filenames violating language convention | See table above |
@@ -137,7 +139,9 @@ The defaults are conservative. Adjust these constants in the source to match you
 │   ├── typescript.go    # TypeScript config
 │   ├── javascript.go    # JavaScript config
 │   ├── rust.go          # Rust config
-│   └── java.go          # Java config
+│   ├── java.go          # Java config
+│   ├── kotlin.go        # Kotlin config
+│   └── swift.go         # Swift config
 ├── checker/
 │   ├── checker.go       # Violation type, tree-sitter parsing, walk helpers
 │   ├── complexity.go    # Cyclomatic complexity check

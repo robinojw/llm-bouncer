@@ -67,6 +67,7 @@ func calculateComplexity(funcNode *sitter.Node, src []byte, lang *language.Langu
 
 	complexityTypes := nodeTypeSet(lang.ComplexityNodeTypes)
 	boolOps := nodeTypeSet(lang.BooleanOperators)
+	boolExprTypes := nodeTypeSet(lang.BooleanExprNodeTypes)
 
 	walk(funcNode, func(n *sitter.Node) bool {
 		// Skip nested functions.
@@ -78,8 +79,13 @@ func calculateComplexity(funcNode *sitter.Node, src []byte, lang *language.Langu
 			complexity++
 		}
 
-		// Count boolean operators in binary expressions.
-		if n.Type() == lang.BinaryExprNodeType {
+		// Kotlin/Swift: each conjunction/disjunction expression is one boolean operator.
+		if boolExprTypes[n.Type()] {
+			complexity++
+		}
+
+		// Go/JS/TS/Java/Rust/Python: binary_expression with operator children.
+		if lang.BinaryExprNodeType != "" && n.Type() == lang.BinaryExprNodeType {
 			for i := 0; i < int(n.ChildCount()); i++ {
 				child := n.Child(i)
 				text := nodeText(child, src)

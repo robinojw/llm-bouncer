@@ -120,4 +120,4 @@ fi
 
 echo ""
 echo "Done! llm-bouncer is installed."
-echo "Supported languages: Go, Python, TypeScript, JavaScript, Rust, Java"
+echo "Supported languages: Go, Python, TypeScript, JavaScript, Rust, Java, Kotlin, Swift"

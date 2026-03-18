@@ -11,7 +11,7 @@ LINT_BINARY=".claude/hooks/llm-bouncer/llm-bouncer"
 VIOLATIONS_FOUND=false
 
 # Supported file extensions
-EXTENSIONS="*.go *.py *.ts *.tsx *.js *.jsx *.rs *.java"
+EXTENSIONS="*.go *.py *.ts *.tsx *.js *.jsx *.rs *.java *.kt *.kts *.swift"
 
 # Run codex with all passed arguments
 codex "$@"
