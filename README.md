@@ -11,8 +11,8 @@ A **language-agnostic** code quality gate for AI coding agents. Hooks into [Clau
 |---|---|---|
 | Go | `.go` | `snake_case.go` |
 | Python | `.py` | `snake_case.py` |
-| TypeScript | `.ts`, `.tsx` | `kebab-case.ts` |
-| JavaScript | `.js`, `.jsx` | `kebab-case.js` |
+| TypeScript | `.ts`, `.tsx` | `camelCase.ts`, `PascalCase.tsx`, `kebab-case.ts` |
+| JavaScript | `.js`, `.jsx` | `camelCase.js`, `PascalCase.jsx`, `kebab-case.js` |
 | Rust | `.rs` | `snake_case.rs` |
 | Java | `.java` | `PascalCase.java` |
 | Kotlin | `.kt`, `.kts` | `PascalCase.kt`, `camelCase.kt` |
