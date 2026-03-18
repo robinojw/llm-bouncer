@@ -1,3 +1,6 @@
+
+<img width="928" height="1138" alt="be87e3fa-a874-49cf-ac4b-0a2a111804d5" src="https://github.com/user-attachments/assets/2a6a5043-1057-4ecd-88e3-a0fdc57ccfcf" />
+
 # llm-bouncer
 
 A code quality gate for AI coding agents. Hooks into [Claude Code](https://docs.anthropic.com/en/docs/claude-code) and [Codex CLI](https://github.com/openai/codex) to catch Go style violations **before** they land, forcing the agent to fix its own output.
