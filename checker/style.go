@@ -2,24 +2,38 @@ package checker
 
 import (
 	"fmt"
-	"go/ast"
-	"go/token"
 	"strings"
+	"unicode"
+
+	sitter "github.com/smacker/go-tree-sitter"
+	"llm-bouncer/language"
 )
 
-func checkNestedIfs(fileSet *token.FileSet, file *ast.File) []Violation {
+func checkNestedIfs(root *sitter.Node, src []byte, lang *language.LanguageConfig) []Violation {
 	var violations []Violation
+	ifTypes := nodeTypeSet(lang.IfNodeTypes)
 
-	ast.Inspect(file, func(node ast.Node) bool {
-		outerIf, ok := node.(*ast.IfStmt)
-		if !ok {
+	walk(root, func(n *sitter.Node) bool {
+		if !ifTypes[n.Type()] {
 			return true
 		}
 
-		ast.Inspect(outerIf.Body, func(inner ast.Node) bool {
-			if innerIf, ok := inner.(*ast.IfStmt); ok {
+		// Look for nested ifs in the body/consequence of this if.
+		body := n.ChildByFieldName(lang.IfBodyField)
+		if body == nil {
+			body = n.ChildByFieldName("body")
+		}
+		if body == nil {
+			return true
+		}
+
+		walk(body, func(inner *sitter.Node) bool {
+			if inner == body {
+				return true
+			}
+			if ifTypes[inner.Type()] {
 				violations = append(violations, Violation{
-					Line:    fileSet.Position(innerIf.Pos()).Line,
+					Line:    startLine(inner),
 					Rule:    "no-nested-ifs",
 					Message: "nested if statement; use early returns or extract a helper function",
 				})
@@ -34,81 +48,119 @@ func checkNestedIfs(fileSet *token.FileSet, file *ast.File) []Violation {
 	return violations
 }
 
-func checkInlineBooleans(fileSet *token.FileSet, file *ast.File) []Violation {
+func checkInlineBooleans(root *sitter.Node, src []byte, lang *language.LanguageConfig) []Violation {
 	var violations []Violation
+	ifTypes := nodeTypeSet(lang.IfNodeTypes)
+	boolOps := nodeTypeSet(lang.BooleanOperators)
 
-	ast.Inspect(file, func(node ast.Node) bool {
-		ifStmt, ok := node.(*ast.IfStmt)
-		if !ok {
+	walk(root, func(n *sitter.Node) bool {
+		if !ifTypes[n.Type()] {
 			return true
 		}
 
-		if isCompoundBoolean(ifStmt.Cond) {
+		cond := n.ChildByFieldName("condition")
+		if cond == nil {
+			return true
+		}
+
+		if hasCompoundBoolean(cond, src, lang, boolOps) {
 			violations = append(violations, Violation{
-				Line:    fileSet.Position(ifStmt.Pos()).Line,
+				Line:    startLine(n),
 				Rule:    "no-inline-booleans",
 				Message: "complex boolean used directly in if; assign to a descriptively named variable first",
 			})
 		}
+
 		return true
 	})
 
 	return violations
 }
 
-func isCompoundBoolean(expression ast.Expr) bool {
-	binary, ok := expression.(*ast.BinaryExpr)
-	if !ok {
-		return false
-	}
-	operator := binary.Op.String()
-	return operator == "&&" || operator == "||"
-}
-
-func checkInlineComments(fileSet *token.FileSet, file *ast.File, src []byte) []Violation {
-	var violations []Violation
-	lines := strings.Split(string(src), "\n")
-
-	for _, commentGroup := range file.Comments {
-		for _, comment := range commentGroup.List {
-			position := fileSet.Position(comment.Pos())
-			lineIndex := position.Line - 1
-			if lineIndex < 0 || lineIndex >= len(lines) {
-				continue
-			}
-
-			trimmedLine := strings.TrimSpace(lines[lineIndex])
-			if !strings.HasPrefix(trimmedLine, "//") && !strings.HasPrefix(trimmedLine, "/*") {
-				violations = append(violations, Violation{
-					Line:    position.Line,
-					Rule:    "no-inline-comments",
-					Message: "inline comment found; write self-documenting code instead",
-				})
+func hasCompoundBoolean(n *sitter.Node, src []byte, lang *language.LanguageConfig, boolOps map[string]bool) bool {
+	found := false
+	walk(n, func(child *sitter.Node) bool {
+		if found {
+			return false
+		}
+		if child.Type() == lang.BinaryExprNodeType {
+			for i := 0; i < int(child.ChildCount()); i++ {
+				text := nodeText(child.Child(i), src)
+				if boolOps[text] {
+					found = true
+					return false
+				}
 			}
 		}
-	}
+		return true
+	})
+	return found
+}
+
+func checkInlineComments(root *sitter.Node, src []byte, lang *language.LanguageConfig) []Violation {
+	var violations []Violation
+	commentTypes := nodeTypeSet(lang.CommentNodeTypes)
+	lines := strings.Split(string(src), "\n")
+
+	walk(root, func(n *sitter.Node) bool {
+		if !commentTypes[n.Type()] {
+			return true
+		}
+
+		row := int(n.StartPoint().Row)
+		if row < 0 || row >= len(lines) {
+			return true
+		}
+
+		trimmedLine := strings.TrimSpace(lines[row])
+		if !isStandaloneComment(trimmedLine, lang) {
+			violations = append(violations, Violation{
+				Line:    startLine(n),
+				Rule:    "no-inline-comments",
+				Message: "inline comment found; write self-documenting code instead",
+			})
+		}
+
+		return true
+	})
 
 	return violations
 }
 
-func checkRepeatedStrings(fileSet *token.FileSet, file *ast.File) []Violation {
+func isStandaloneComment(trimmedLine string, lang *language.LanguageConfig) bool {
+	// A standalone comment means the line starts with a comment marker.
+	commentPrefixes := []string{"//", "/*", "#", "--"}
+	for _, prefix := range commentPrefixes {
+		if strings.HasPrefix(trimmedLine, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+func checkRepeatedStrings(root *sitter.Node, src []byte, lang *language.LanguageConfig) []Violation {
 	type occurrence struct {
 		firstLine int
 		count     int
 	}
 
+	stringTypes := nodeTypeSet(lang.StringNodeTypes)
 	seen := make(map[string]*occurrence)
 
-	ast.Inspect(file, func(node ast.Node) bool {
-		lit, ok := node.(*ast.BasicLit)
-		if !ok || lit.Kind != token.STRING || len(lit.Value) <= 3 {
+	walk(root, func(n *sitter.Node) bool {
+		if !stringTypes[n.Type()] {
 			return true
 		}
 
-		if existing, found := seen[lit.Value]; found {
+		value := nodeText(n, src)
+		if len(value) <= 3 {
+			return true
+		}
+
+		if existing, found := seen[value]; found {
 			existing.count++
 		} else {
-			seen[lit.Value] = &occurrence{firstLine: fileSet.Position(lit.Pos()).Line, count: 1}
+			seen[value] = &occurrence{firstLine: startLine(n), count: 1}
 		}
 		return true
 	})
@@ -126,29 +178,34 @@ func checkRepeatedStrings(fileSet *token.FileSet, file *ast.File) []Violation {
 	return violations
 }
 
-func checkMagicNumbers(fileSet *token.FileSet, file *ast.File) []Violation {
-	constPositions := collectConstPositions(file)
+func checkMagicNumbers(root *sitter.Node, src []byte, lang *language.LanguageConfig) []Violation {
+	numberTypes := nodeTypeSet(lang.NumberNodeTypes)
 
 	var violations []Violation
-	ast.Inspect(file, func(node ast.Node) bool {
-		lit, ok := node.(*ast.BasicLit)
-		if !ok {
+	walk(root, func(n *sitter.Node) bool {
+		if !numberTypes[n.Type()] {
 			return true
 		}
-		if lit.Kind != token.INT && lit.Kind != token.FLOAT {
+
+		value := nodeText(n, src)
+
+		// Skip non-numeric text (e.g., TypeScript "number" type annotations).
+		if !looksNumeric(value) {
 			return true
 		}
-		if lit.Value == "0" || lit.Value == "1" {
+
+		if value == "0" || value == "1" {
 			return true
 		}
-		if constPositions[lit.Pos()] {
+
+		if isInConstContext(n, src, lang) {
 			return true
 		}
 
 		violations = append(violations, Violation{
-			Line:    fileSet.Position(lit.Pos()).Line,
+			Line:    startLine(n),
 			Rule:    "no-magic-numbers",
-			Message: fmt.Sprintf("magic number %s; extract to a named constant", lit.Value),
+			Message: fmt.Sprintf("magic number %s; extract to a named constant", value),
 		})
 		return true
 	})
@@ -156,19 +213,93 @@ func checkMagicNumbers(fileSet *token.FileSet, file *ast.File) []Violation {
 	return violations
 }
 
-func collectConstPositions(file *ast.File) map[token.Pos]bool {
-	positions := make(map[token.Pos]bool)
-	for _, declaration := range file.Decls {
-		genDecl, ok := declaration.(*ast.GenDecl)
-		if !ok || genDecl.Tok != token.CONST {
-			continue
-		}
-		ast.Inspect(genDecl, func(node ast.Node) bool {
-			if node != nil {
-				positions[node.Pos()] = true
+func isInConstContext(n *sitter.Node, src []byte, lang *language.LanguageConfig) bool {
+	switch lang.ConstStrategy {
+	case language.ConstByBlock:
+		constTypes := nodeTypeSet(lang.ConstBlockNodeTypes)
+		return isDescendantOf(n, constTypes)
+
+	case language.ConstByKeyword:
+		// Walk up to find a declaration with the const keyword.
+		for p := n.Parent(); p != nil; p = p.Parent() {
+			pType := p.Type()
+			// JS/TS: lexical_declaration with "const" keyword child
+			if pType == "lexical_declaration" || pType == "variable_declaration" {
+				for i := 0; i < int(p.ChildCount()); i++ {
+					child := p.Child(i)
+					if nodeText(child, src) == lang.ConstKeyword {
+						return true
+					}
+				}
 			}
-			return true
-		})
+			// Rust: const_item
+			if lang.ConstBlockNodeTypes != nil {
+				constTypes := nodeTypeSet(lang.ConstBlockNodeTypes)
+				if constTypes[pType] {
+					return true
+				}
+			}
+			// Java: field_declaration or local_variable_declaration with "final" modifier
+			if pType == "field_declaration" || pType == "local_variable_declaration" || pType == "constant_declaration" {
+				if hasModifier(p, src, lang.ConstKeyword) {
+					return true
+				}
+			}
+		}
+		return false
+
+	case language.ConstByConvention:
+		// Python: check if the variable name is UPPER_SNAKE_CASE.
+		for p := n.Parent(); p != nil; p = p.Parent() {
+			if p.Type() == "assignment" {
+				if left := p.ChildByFieldName("left"); left != nil {
+					name := nodeText(left, src)
+					if isUpperSnakeCase(name) {
+						return true
+					}
+				}
+				return false
+			}
+		}
+		return false
 	}
-	return positions
+	return false
+}
+
+func hasModifier(n *sitter.Node, src []byte, keyword string) bool {
+	for i := 0; i < int(n.ChildCount()); i++ {
+		child := n.Child(i)
+		if child.Type() == "modifiers" {
+			for j := 0; j < int(child.ChildCount()); j++ {
+				if nodeText(child.Child(j), src) == keyword {
+					return true
+				}
+			}
+		}
+		if nodeText(child, src) == keyword {
+			return true
+		}
+	}
+	return false
+}
+
+func isUpperSnakeCase(name string) bool {
+	if len(name) == 0 {
+		return false
+	}
+	for _, r := range name {
+		if r != '_' && !unicode.IsUpper(r) && !unicode.IsDigit(r) {
+			return false
+		}
+	}
+	return true
+}
+
+func looksNumeric(s string) bool {
+	if len(s) == 0 {
+		return false
+	}
+	// Starts with a digit, or a dot followed by a digit (e.g., ".5"), or 0x/0b/0o prefix.
+	first := s[0]
+	return (first >= '0' && first <= '9') || (first == '.' && len(s) > 1 && s[1] >= '0' && s[1] <= '9')
 }

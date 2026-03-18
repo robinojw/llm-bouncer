@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# codex-lint.sh — Run codex then lint all modified Go files
+# codex-lint.sh — Run codex then lint all modified source files
 #
 # Since Codex CLI has no native hook support yet, this wrapper detects
-# which Go files changed and runs the linter after codex completes.
+# which files changed and runs the linter after codex completes.
 # See: https://github.com/openai/codex/issues/7396
 
 set -euo pipefail
@@ -10,13 +10,20 @@ set -euo pipefail
 LINT_BINARY=".claude/hooks/llm-bouncer/llm-bouncer"
 VIOLATIONS_FOUND=false
 
+# Supported file extensions
+EXTENSIONS="*.go *.py *.ts *.tsx *.js *.jsx *.rs *.java"
+
 # Run codex with all passed arguments
 codex "$@"
 
-# Find all Go files modified since last commit (includes staged and unstaged)
-CHANGED_FILES=$(git diff --name-only HEAD -- '*.go' 2>/dev/null || true)
-UNSTAGED=$(git diff --name-only -- '*.go' 2>/dev/null || true)
-CHANGED_FILES=$(printf '%s\n%s' "$CHANGED_FILES" "$UNSTAGED" | sort -u)
+# Find all supported files modified since last commit (includes staged and unstaged)
+CHANGED_FILES=""
+for ext in $EXTENSIONS; do
+  COMMITTED=$(git diff --name-only HEAD -- "$ext" 2>/dev/null || true)
+  UNSTAGED=$(git diff --name-only -- "$ext" 2>/dev/null || true)
+  CHANGED_FILES=$(printf '%s\n%s\n%s' "$CHANGED_FILES" "$COMMITTED" "$UNSTAGED")
+done
+CHANGED_FILES=$(echo "$CHANGED_FILES" | sort -u)
 
 while IFS= read -r file; do
   [[ -z "$file" ]] && continue

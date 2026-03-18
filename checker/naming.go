@@ -2,42 +2,37 @@ package checker
 
 import (
 	"fmt"
-	"go/ast"
-	"go/token"
+
+	sitter "github.com/smacker/go-tree-sitter"
+	"llm-bouncer/language"
 )
 
-var acceptableShortIdents = map[string]bool{
-	"i": true, "j": true, "k": true, "_": true,
-}
-
-func checkNaming(fileSet *token.FileSet, file *ast.File) []Violation {
+func checkNaming(root *sitter.Node, src []byte, lang *language.LanguageConfig) []Violation {
 	var violations []Violation
-	receiverNames := collectReceiverNames(file)
 
-	ast.Inspect(file, func(node ast.Node) bool {
-		switch declaration := node.(type) {
-		case *ast.AssignStmt:
-			for _, expression := range declaration.Lhs {
-				if ident, ok := expression.(*ast.Ident); ok {
-					if isTooShort(ident.Name) && !receiverNames[ident.Name] {
-						violations = append(violations, Violation{
-							Line:    fileSet.Position(ident.Pos()).Line,
-							Rule:    "naming",
-							Message: fmt.Sprintf("variable %q is too short; use a descriptive name", ident.Name),
-						})
-					}
+	varTypes := nodeTypeSet(lang.VariableNodeTypes)
+	paramTypes := nodeTypeSet(lang.ParameterNodeTypes)
+
+	// Collect Go receiver names to exclude them.
+	receiverNames := map[string]bool{}
+	if lang.ReceiverNodeType != "" {
+		walk(root, func(n *sitter.Node) bool {
+			if n.Type() == lang.ReceiverNodeType {
+				params := n.ChildByFieldName("parameters")
+				if params != nil {
+					collectReceiverIdents(params, src, receiverNames)
 				}
 			}
-		case *ast.Field:
-			for _, name := range declaration.Names {
-				if isTooShort(name.Name) && !receiverNames[name.Name] {
-					violations = append(violations, Violation{
-						Line:    fileSet.Position(name.Pos()).Line,
-						Rule:    "naming",
-						Message: fmt.Sprintf("parameter %q is too short; use a descriptive name", name.Name),
-					})
-				}
-			}
+			return true
+		})
+	}
+
+	walk(root, func(n *sitter.Node) bool {
+		if varTypes[n.Type()] {
+			checkVarIdents(n, src, lang, receiverNames, &violations)
+		}
+		if paramTypes[n.Type()] {
+			checkParamIdents(n, src, lang, receiverNames, &violations)
 		}
 		return true
 	})
@@ -45,22 +40,91 @@ func checkNaming(fileSet *token.FileSet, file *ast.File) []Violation {
 	return violations
 }
 
-func collectReceiverNames(file *ast.File) map[string]bool {
-	names := make(map[string]bool)
-	for _, declaration := range file.Decls {
-		funcDecl, ok := declaration.(*ast.FuncDecl)
-		if !ok || funcDecl.Recv == nil {
-			continue
-		}
-		for _, field := range funcDecl.Recv.List {
-			for _, name := range field.Names {
-				names[name.Name] = true
+func checkVarIdents(n *sitter.Node, src []byte, lang *language.LanguageConfig, receivers map[string]bool, violations *[]Violation) {
+	// Check the "left" field first (Go short_var_declaration, Python assignment).
+	if left := n.ChildByFieldName("left"); left != nil {
+		extractAndCheckIdents(left, src, lang, receivers, "variable", violations)
+		return
+	}
+	// Fall back to scanning direct identifier children (JS/TS variable_declarator, etc.).
+	for i := 0; i < int(n.ChildCount()); i++ {
+		child := n.Child(i)
+		if child.Type() == "variable_declarator" {
+			if nameNode := child.ChildByFieldName("name"); nameNode != nil && nameNode.Type() == "identifier" {
+				name := nodeText(nameNode, src)
+				if isTooShort(name, lang) && !receivers[name] {
+					*violations = append(*violations, Violation{
+						Line:    startLine(nameNode),
+						Rule:    "naming",
+						Message: fmt.Sprintf("variable %q is too short; use a descriptive name", name),
+					})
+				}
 			}
 		}
 	}
-	return names
 }
 
-func isTooShort(name string) bool {
-	return len(name) == 1 && !acceptableShortIdents[name]
+func checkParamIdents(n *sitter.Node, src []byte, lang *language.LanguageConfig, receivers map[string]bool, violations *[]Violation) {
+	// Try "name" field first (Go parameter_declaration, TS required_parameter, etc.).
+	if nameNode := n.ChildByFieldName("name"); nameNode != nil {
+		name := nodeText(nameNode, src)
+		if isTooShort(name, lang) && !receivers[name] {
+			*violations = append(*violations, Violation{
+				Line:    startLine(nameNode),
+				Rule:    "naming",
+				Message: fmt.Sprintf("parameter %q is too short; use a descriptive name", name),
+			})
+		}
+		return
+	}
+	// Fall back to first identifier child.
+	for i := 0; i < int(n.ChildCount()); i++ {
+		child := n.Child(i)
+		if child.Type() == "identifier" {
+			name := nodeText(child, src)
+			if isTooShort(name, lang) && !receivers[name] {
+				*violations = append(*violations, Violation{
+					Line:    startLine(child),
+					Rule:    "naming",
+					Message: fmt.Sprintf("parameter %q is too short; use a descriptive name", name),
+				})
+			}
+			return
+		}
+	}
+}
+
+func extractAndCheckIdents(n *sitter.Node, src []byte, lang *language.LanguageConfig, receivers map[string]bool, kind string, violations *[]Violation) {
+	if n.Type() == "identifier" {
+		name := nodeText(n, src)
+		if isTooShort(name, lang) && !receivers[name] {
+			*violations = append(*violations, Violation{
+				Line:    startLine(n),
+				Rule:    "naming",
+				Message: fmt.Sprintf("%s %q is too short; use a descriptive name", kind, name),
+			})
+		}
+		return
+	}
+	for i := 0; i < int(n.ChildCount()); i++ {
+		extractAndCheckIdents(n.Child(i), src, lang, receivers, kind, violations)
+	}
+}
+
+func collectReceiverIdents(paramList *sitter.Node, src []byte, names map[string]bool) {
+	for i := 0; i < int(paramList.ChildCount()); i++ {
+		child := paramList.Child(i)
+		if child.Type() == "parameter_declaration" {
+			if nameNode := child.ChildByFieldName("name"); nameNode != nil {
+				names[nodeText(nameNode, src)] = true
+			}
+		}
+	}
+}
+
+func isTooShort(name string, lang *language.LanguageConfig) bool {
+	if lang.AcceptableShortNames[name] {
+		return false
+	}
+	return len(name) == 1
 }
