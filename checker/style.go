@@ -18,11 +18,7 @@ func checkNestedIfs(root *sitter.Node, src []byte, lang *language.LanguageConfig
 			return true
 		}
 
-		// Look for nested ifs in the body/consequence of this if.
-		body := n.ChildByFieldName(lang.IfBodyField)
-		if body == nil {
-			body = n.ChildByFieldName("body")
-		}
+		body := findIfBody(n, lang)
 		if body == nil {
 			return true
 		}
@@ -48,6 +44,28 @@ func checkNestedIfs(root *sitter.Node, src []byte, lang *language.LanguageConfig
 	return violations
 }
 
+// findIfBody returns the body node of an if statement/expression.
+func findIfBody(n *sitter.Node, lang *language.LanguageConfig) *sitter.Node {
+	// Try named field first.
+	if lang.IfBodyField != "" {
+		if body := n.ChildByFieldName(lang.IfBodyField); body != nil {
+			return body
+		}
+	}
+	// Fallback: find first child matching IfBodyNodeTypes (Kotlin: control_structure_body, Swift: statements).
+	if len(lang.IfBodyNodeTypes) > 0 {
+		bodyTypes := nodeTypeSet(lang.IfBodyNodeTypes)
+		for i := 0; i < int(n.ChildCount()); i++ {
+			child := n.Child(i)
+			if bodyTypes[child.Type()] {
+				return child
+			}
+		}
+	}
+	// Last fallback: try "body" field.
+	return n.ChildByFieldName("body")
+}
+
 func checkInlineBooleans(root *sitter.Node, src []byte, lang *language.LanguageConfig) []Violation {
 	var violations []Violation
 	ifTypes := nodeTypeSet(lang.IfNodeTypes)
@@ -58,7 +76,7 @@ func checkInlineBooleans(root *sitter.Node, src []byte, lang *language.LanguageC
 			return true
 		}
 
-		cond := n.ChildByFieldName("condition")
+		cond := findIfCondition(n, lang)
 		if cond == nil {
 			return true
 		}
@@ -77,13 +95,44 @@ func checkInlineBooleans(root *sitter.Node, src []byte, lang *language.LanguageC
 	return violations
 }
 
+// findIfCondition returns the condition expression of an if statement/expression.
+func findIfCondition(n *sitter.Node, lang *language.LanguageConfig) *sitter.Node {
+	// Try "condition" field first (Go, Python, JS/TS, Java, Rust).
+	if cond := n.ChildByFieldName("condition"); cond != nil {
+		return cond
+	}
+	// Fallback for Kotlin/Swift: the condition is the first expression child
+	// (skip keyword tokens like "if", "(", ")").
+	keywords := map[string]bool{"if": true, "(": true, ")": true, "{": true}
+	bodyTypes := nodeTypeSet(lang.IfBodyNodeTypes)
+	for i := 0; i < int(n.ChildCount()); i++ {
+		child := n.Child(i)
+		if keywords[child.Type()] {
+			continue
+		}
+		if bodyTypes[child.Type()] {
+			break
+		}
+		// First non-keyword, non-body child is the condition.
+		return child
+	}
+	return nil
+}
+
 func hasCompoundBoolean(n *sitter.Node, src []byte, lang *language.LanguageConfig, boolOps map[string]bool) bool {
+	boolExprTypes := nodeTypeSet(lang.BooleanExprNodeTypes)
 	found := false
 	walk(n, func(child *sitter.Node) bool {
 		if found {
 			return false
 		}
-		if child.Type() == lang.BinaryExprNodeType {
+		// Kotlin/Swift: node type itself IS the boolean expression.
+		if boolExprTypes[child.Type()] {
+			found = true
+			return false
+		}
+		// Go/JS/TS/Java/Rust/Python: binary_expression with operator children.
+		if lang.BinaryExprNodeType != "" && child.Type() == lang.BinaryExprNodeType {
 			for i := 0; i < int(child.ChildCount()); i++ {
 				text := nodeText(child.Child(i), src)
 				if boolOps[text] {
@@ -256,6 +305,37 @@ func isInConstContext(n *sitter.Node, src []byte, lang *language.LanguageConfig)
 					name := nodeText(left, src)
 					if isUpperSnakeCase(name) {
 						return true
+					}
+				}
+				return false
+			}
+		}
+		return false
+
+	case language.ConstByBindingKeyword:
+		// Kotlin (val) / Swift (let): walk up to property_declaration,
+		// check if a child contains the binding keyword.
+		for p := n.Parent(); p != nil; p = p.Parent() {
+			if p.Type() == "property_declaration" {
+				for i := 0; i < int(p.ChildCount()); i++ {
+					child := p.Child(i)
+					text := nodeText(child, src)
+					if text == lang.ConstKeyword {
+						return true
+					}
+					// Kotlin: binding_pattern_kind contains "val"
+					if child.Type() == "binding_pattern_kind" {
+						if nodeText(child, src) == lang.ConstKeyword {
+							return true
+						}
+					}
+					// Swift: value_binding_pattern contains "let"
+					if child.Type() == "value_binding_pattern" {
+						for j := 0; j < int(child.ChildCount()); j++ {
+							if nodeText(child.Child(j), src) == lang.ConstKeyword {
+								return true
+							}
+						}
 					}
 				}
 				return false
