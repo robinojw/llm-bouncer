@@ -39,4 +39,47 @@ main() {
   echo "To uninstall: $SCRIPT_DIR/install.sh --uninstall"
 }
 
+patch_claude_code() {
+  local config="$HOME/.claude/settings.json"
+  echo "==> Patching Claude Code ($config)..."
+
+  if [[ ! -f "$config" ]]; then
+    mkdir -p "$HOME/.claude"
+    echo '{}' > "$config"
+  fi
+
+  python3 - "$config" "$BINARY" <<'PYEOF'
+import json, sys
+
+config_path = sys.argv[1]
+binary_path = sys.argv[2]
+
+with open(config_path, "r") as f:
+    config = json.load(f)
+
+hook_entry = {
+    "matcher": "Write|Edit|MultiEdit",
+    "hooks": [{"type": "command", "command": binary_path}]
+}
+
+hooks = config.setdefault("hooks", {})
+post_tool = hooks.setdefault("PostToolUse", [])
+
+# Idempotent: skip if already present
+for existing in post_tool:
+    for h in existing.get("hooks", []):
+        if h.get("command") == binary_path:
+            print("  Already configured, skipping.")
+            sys.exit(0)
+
+post_tool.append(hook_entry)
+
+with open(config_path, "w") as f:
+    json.dump(config, f, indent=2)
+    f.write("\n")
+
+print("  Added PostToolUse hook.")
+PYEOF
+}
+
 main "$@"
