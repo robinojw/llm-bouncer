@@ -82,6 +82,70 @@ print("  Added PostToolUse hook.")
 PYEOF
 }
 
+uninstall() {
+  echo "==> Uninstalling llm-bouncer..."
+
+  # Remove binary and install dir
+  if [[ -d "$INSTALL_DIR" ]]; then
+    rm -rf "$INSTALL_DIR"
+    echo "  Removed $INSTALL_DIR"
+  fi
+
+  # Remove hook entry from Claude Code settings
+  local claude_config="$HOME/.claude/settings.json"
+  if [[ -f "$claude_config" ]]; then
+    python3 - "$claude_config" <<'PYEOF'
+import json, sys
+
+config_path = sys.argv[1]
+
+with open(config_path, "r") as f:
+    config = json.load(f)
+
+hooks = config.get("hooks", {})
+post_tool = hooks.get("PostToolUse", [])
+
+filtered = [
+    entry for entry in post_tool
+    if not any("llm-bouncer" in h.get("command", "") for h in entry.get("hooks", []))
+]
+
+if len(filtered) != len(post_tool):
+    if filtered:
+        hooks["PostToolUse"] = filtered
+    else:
+        hooks.pop("PostToolUse", None)
+    with open(config_path, "w") as f:
+        json.dump(config, f, indent=2)
+        f.write("\n")
+    print("  Removed hook from Claude Code settings.")
+else:
+    print("  No hook found in Claude Code settings.")
+PYEOF
+  fi
+
+  # Remove Codex hooks.json if it's our placeholder
+  local codex_config="$HOME/.codex/hooks.json"
+  if [[ -f "$codex_config" ]]; then
+    local content
+    content=$(python3 -c "
+import json
+with open('$codex_config') as f:
+    c = json.load(f)
+print('empty' if c == {'hooks': {}} else 'has_content')
+")
+    if [[ "$content" == "empty" ]]; then
+      rm "$codex_config"
+      echo "  Removed Codex hooks.json placeholder."
+    else
+      echo "  Codex hooks.json has custom content, leaving in place."
+    fi
+  fi
+
+  echo ""
+  echo "Uninstall complete."
+}
+
 patch_codex() {
   local config="$HOME/.codex/hooks.json"
   echo "==> Patching Codex CLI ($config)..."
