@@ -9,3 +9,6 @@ llm-bouncer
 .idea/
 .vscode/
 *.swp
+
+# Plans
+docs/plans/

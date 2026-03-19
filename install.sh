@@ -1,123 +1,174 @@
 #!/usr/bin/env bash
-# install.sh — Build llm-bouncer and install it as a Claude Code hook
-#
-# Usage:
-#   cd your-project && bash /path/to/llm-bouncer/install.sh
-#   # or:
-#   bash <(curl -fsSL https://raw.githubusercontent.com/robinojw/llm-bouncer/main/install.sh)
-
 set -euo pipefail
 
-BOUNCER_REPO="https://github.com/robinojw/llm-bouncer.git"
-HOOK_DIR=".claude/hooks/llm-bouncer"
-SETTINGS_FILE=".claude/settings.json"
+INSTALL_DIR="$HOME/.llm-bouncer"
+BIN_DIR="$INSTALL_DIR/bin"
+BINARY="$BIN_DIR/llm-bouncer"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
-# ---------- helpers ----------
+main() {
+  if [[ "${1:-}" == "--uninstall" ]]; then
+    uninstall
+    exit 0
+  fi
 
-die() { echo "ERROR: $1" >&2; exit 1; }
+  echo "==> Checking prerequisites..."
+  command -v go >/dev/null 2>&1 || { echo "Error: go is not installed"; exit 1; }
+  command -v python3 >/dev/null 2>&1 || { echo "Error: python3 is required for config patching"; exit 1; }
 
-require_cmd() {
-  command -v "$1" >/dev/null 2>&1 || die "$1 is required but not installed"
+  echo "==> Building llm-bouncer..."
+  (cd "$SCRIPT_DIR" && CGO_ENABLED=1 go build -o llm-bouncer .)
+
+  echo "==> Installing binary to $BIN_DIR..."
+  mkdir -p "$BIN_DIR"
+  cp "$SCRIPT_DIR/llm-bouncer" "$BINARY"
+  chmod +x "$BINARY"
+
+  echo "==> Installing codex wrapper to $INSTALL_DIR..."
+  cp "$SCRIPT_DIR/codex-lint.sh" "$INSTALL_DIR/codex-lint.sh"
+  chmod +x "$INSTALL_DIR/codex-lint.sh"
+
+  patch_claude_code
+  patch_codex
+
+  echo ""
+  echo "Done! llm-bouncer installed globally."
+  echo "  Binary:        $BINARY"
+  echo "  Codex wrapper: $INSTALL_DIR/codex-lint.sh"
+  echo ""
+  echo "To uninstall: $SCRIPT_DIR/install.sh --uninstall"
 }
 
-# ---------- pre-flight ----------
+patch_claude_code() {
+  local config="$HOME/.claude/settings.json"
+  echo "==> Patching Claude Code ($config)..."
 
-require_cmd go
-require_cmd git
-require_cmd python3
+  if [[ ! -f "$config" ]]; then
+    mkdir -p "$HOME/.claude"
+    echo '{}' > "$config"
+  fi
 
-# CGO is required for tree-sitter (C library).
-export CGO_ENABLED=1
-
-# Determine the project root (where the hook will be installed).
-PROJECT_DIR="${PROJECT_DIR:-$(pwd)}"
-echo "Installing llm-bouncer into: $PROJECT_DIR"
-
-# ---------- clone or locate source ----------
-
-if [ -f "go.mod" ] && grep -q "module llm-bouncer" go.mod 2>/dev/null; then
-  # Running from inside the llm-bouncer repo itself.
-  SRC_DIR="$(pwd)"
-else
-  # Clone to a temp directory.
-  SRC_DIR="$(mktemp -d)"
-  trap 'rm -rf "$SRC_DIR"' EXIT
-  echo "Cloning llm-bouncer..."
-  git clone --depth 1 "$BOUNCER_REPO" "$SRC_DIR"
-fi
-
-# ---------- build ----------
-
-echo "Building llm-bouncer (CGO_ENABLED=1)..."
-cd "$SRC_DIR"
-go build -o llm-bouncer .
-
-# ---------- install binary ----------
-
-mkdir -p "$PROJECT_DIR/$HOOK_DIR"
-cp llm-bouncer "$PROJECT_DIR/$HOOK_DIR/llm-bouncer"
-chmod +x "$PROJECT_DIR/$HOOK_DIR/llm-bouncer"
-echo "Binary installed to $PROJECT_DIR/$HOOK_DIR/llm-bouncer"
-
-# ---------- patch settings.json ----------
-
-HOOK_ENTRY='{
-  "hooks": {
-    "PostToolUse": [
-      {
-        "matcher": "Write|Edit|MultiEdit",
-        "hooks": [
-          {
-            "type": "command",
-            "command": ".claude/hooks/llm-bouncer/llm-bouncer"
-          }
-        ]
-      }
-    ]
-  }
-}'
-
-mkdir -p "$PROJECT_DIR/.claude"
-
-if [ -f "$PROJECT_DIR/$SETTINGS_FILE" ]; then
-  echo "Merging hook into existing $SETTINGS_FILE..."
-  python3 -c "
+  python3 - "$config" "$BINARY" <<'PYEOF'
 import json, sys
 
-with open('$PROJECT_DIR/$SETTINGS_FILE') as f:
-    settings = json.load(f)
+config_path = sys.argv[1]
+binary_path = sys.argv[2]
 
-hook_entry = json.loads('''$HOOK_ENTRY''')
+with open(config_path, "r") as f:
+    config = json.load(f)
 
-hooks = settings.setdefault('hooks', {})
-post = hooks.setdefault('PostToolUse', [])
+hook_entry = {
+    "matcher": "Write|Edit|MultiEdit",
+    "hooks": [{"type": "command", "command": binary_path}]
+}
 
-# Avoid duplicates.
-cmd = '.claude/hooks/llm-bouncer/llm-bouncer'
-already = any(
-    h.get('command') == cmd
-    for group in post
-    for h in group.get('hooks', [])
-)
+hooks = config.setdefault("hooks", {})
+post_tool = hooks.setdefault("PostToolUse", [])
 
-if not already:
-    post.append(hook_entry['hooks']['PostToolUse'][0])
-    with open('$PROJECT_DIR/$SETTINGS_FILE', 'w') as f:
-        json.dump(settings, f, indent=2)
-    print('Hook added to $SETTINGS_FILE')
+# Idempotent: skip if already present
+for existing in post_tool:
+    for h in existing.get("hooks", []):
+        if h.get("command") == binary_path:
+            print("  Already configured, skipping.")
+            sys.exit(0)
+
+post_tool.append(hook_entry)
+
+with open(config_path, "w") as f:
+    json.dump(config, f, indent=2)
+    f.write("\n")
+
+print("  Added PostToolUse hook.")
+PYEOF
+}
+
+uninstall() {
+  echo "==> Uninstalling llm-bouncer..."
+
+  # Remove binary and install dir
+  if [[ -d "$INSTALL_DIR" ]]; then
+    rm -rf "$INSTALL_DIR"
+    echo "  Removed $INSTALL_DIR"
+  fi
+
+  # Remove hook entry from Claude Code settings
+  local claude_config="$HOME/.claude/settings.json"
+  if [[ -f "$claude_config" ]]; then
+    python3 - "$claude_config" <<'PYEOF'
+import json, sys
+
+config_path = sys.argv[1]
+
+with open(config_path, "r") as f:
+    config = json.load(f)
+
+hooks = config.get("hooks", {})
+post_tool = hooks.get("PostToolUse", [])
+
+filtered = [
+    entry for entry in post_tool
+    if not any("llm-bouncer" in h.get("command", "") for h in entry.get("hooks", []))
+]
+
+if len(filtered) != len(post_tool):
+    if filtered:
+        hooks["PostToolUse"] = filtered
+    else:
+        hooks.pop("PostToolUse", None)
+    with open(config_path, "w") as f:
+        json.dump(config, f, indent=2)
+        f.write("\n")
+    print("  Removed hook from Claude Code settings.")
 else:
-    print('Hook already present in $SETTINGS_FILE')
-"
-else
-  echo "$HOOK_ENTRY" | python3 -c "
-import json, sys
-data = json.load(sys.stdin)
-with open('$PROJECT_DIR/$SETTINGS_FILE', 'w') as f:
-    json.dump(data, f, indent=2)
-"
-  echo "Created $SETTINGS_FILE with hook configuration"
-fi
+    print("  No hook found in Claude Code settings.")
+PYEOF
+  fi
 
-echo ""
-echo "Done! llm-bouncer is installed."
-echo "Supported languages: Go, Python, TypeScript, JavaScript, Rust, Java, Kotlin, Swift"
+  # Remove Codex hooks.json if it's our placeholder
+  local codex_config="$HOME/.codex/hooks.json"
+  if [[ -f "$codex_config" ]]; then
+    local content
+    content=$(python3 -c "
+import json
+with open('$codex_config') as f:
+    c = json.load(f)
+print('empty' if c == {'hooks': {}} else 'has_content')
+")
+    if [[ "$content" == "empty" ]]; then
+      rm "$codex_config"
+      echo "  Removed Codex hooks.json placeholder."
+    else
+      echo "  Codex hooks.json has custom content, leaving in place."
+    fi
+  fi
+
+  echo ""
+  echo "Uninstall complete."
+}
+
+patch_codex() {
+  local config="$HOME/.codex/hooks.json"
+  echo "==> Patching Codex CLI ($config)..."
+
+  if [[ ! -d "$HOME/.codex" ]]; then
+    echo "  Codex CLI config directory not found, skipping."
+    return
+  fi
+
+  if [[ -f "$config" ]]; then
+    echo "  hooks.json already exists, skipping."
+    return
+  fi
+
+  cat > "$config" <<JSONEOF
+{
+  "hooks": {}
+}
+JSONEOF
+
+  echo "  Created hooks.json placeholder."
+  echo "  Note: Codex CLI lacks PostToolUse. Use the wrapper instead:"
+  echo "    $INSTALL_DIR/codex-lint.sh \"your prompt\""
+}
+
+main "$@"
