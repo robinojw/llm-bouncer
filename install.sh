@@ -82,4 +82,29 @@ print("  Added PostToolUse hook.")
 PYEOF
 }
 
+patch_codex() {
+  local config="$HOME/.codex/hooks.json"
+  echo "==> Patching Codex CLI ($config)..."
+
+  if [[ ! -d "$HOME/.codex" ]]; then
+    echo "  Codex CLI config directory not found, skipping."
+    return
+  fi
+
+  if [[ -f "$config" ]]; then
+    echo "  hooks.json already exists, skipping."
+    return
+  fi
+
+  cat > "$config" <<JSONEOF
+{
+  "hooks": {}
+}
+JSONEOF
+
+  echo "  Created hooks.json placeholder."
+  echo "  Note: Codex CLI lacks PostToolUse. Use the wrapper instead:"
+  echo "    $INSTALL_DIR/codex-lint.sh \"your prompt\""
+}
+
 main "$@"
