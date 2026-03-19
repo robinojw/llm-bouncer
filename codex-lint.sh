@@ -7,7 +7,12 @@
 
 set -euo pipefail
 
-LINT_BINARY=".claude/hooks/llm-bouncer/llm-bouncer"
+LINT_BINARY="${LLM_BOUNCER_BIN:-$HOME/.llm-bouncer/bin/llm-bouncer}"
+if [[ ! -x "$LINT_BINARY" ]]; then
+  echo "Error: llm-bouncer not found at $LINT_BINARY"
+  echo "Run install.sh first, or set LLM_BOUNCER_BIN to the binary path."
+  exit 1
+fi
 VIOLATIONS_FOUND=false
 
 # Supported file extensions
