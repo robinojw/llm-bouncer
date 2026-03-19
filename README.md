@@ -42,70 +42,37 @@ For Codex CLI (which lacks native hook support), a wrapper script diffs changed 
 
 ## Quick start
 
-### One-liner install
-
-From your project directory:
-
-```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/robinojw/llm-bouncer/main/install.sh)
-```
-
-This builds the binary, copies it to `.claude/hooks/llm-bouncer/`, and patches your `.claude/settings.json`.
-
-**Requires:** Go 1.21+, git, python3, and a C compiler (CGO is required for tree-sitter).
-
-### Manual install
-
-#### 1. Build
+### One-command install
 
 ```bash
 git clone https://github.com/robinojw/llm-bouncer.git
 cd llm-bouncer
-CGO_ENABLED=1 go build -o llm-bouncer .
+bash install.sh
 ```
 
-#### 2. Install for Claude Code
+This builds the binary, installs it to `~/.llm-bouncer/bin/`, and patches global configs for:
+- **Claude Code** — adds a `PostToolUse` hook to `~/.claude/settings.json`
+- **Codex CLI** — installs a wrapper script at `~/.llm-bouncer/codex-lint.sh`
 
-Copy the binary into your project's hook directory:
+**Requires:** Go 1.21+, git, python3, and a C compiler (CGO is required for tree-sitter).
+
+### Codex CLI usage
+
+Codex CLI doesn't support PostToolUse hooks yet. Use the wrapper script:
 
 ```bash
-mkdir -p your-project/.claude/hooks/llm-bouncer
-cp llm-bouncer your-project/.claude/hooks/llm-bouncer/
-```
-
-Add the hook to your project's `.claude/settings.json`:
-
-```json
-{
-  "hooks": {
-    "PostToolUse": [
-      {
-        "matcher": "Write|Edit|MultiEdit",
-        "hooks": [
-          {
-            "type": "command",
-            "command": ".claude/hooks/llm-bouncer/llm-bouncer"
-          }
-        ]
-      }
-    ]
-  }
-}
-```
-
-#### 3. Install for Codex CLI
-
-Use the wrapper script instead of calling `codex` directly:
-
-```bash
-cp codex-lint.sh your-project/
-chmod +x your-project/codex-lint.sh
-
-# Then use it in place of codex:
-./codex-lint.sh "add a new endpoint"
+~/.llm-bouncer/codex-lint.sh "add a new endpoint"
 ```
 
 See [openai/codex#7396](https://github.com/openai/codex/issues/7396) for native hook support progress.
+
+### Uninstall
+
+```bash
+bash install.sh --uninstall
+```
+
+Removes the binary, wrapper, and all hook entries from global configs.
 
 ## Standalone usage
 
@@ -148,7 +115,9 @@ The defaults are conservative. Adjust these constants in the source to match you
 │   ├── files.go         # File size and naming checks
 │   ├── naming.go        # Variable and parameter naming checks
 │   └── style.go         # Nested ifs, inline booleans, comments, strings, magic numbers
-├── install.sh           # One-command installer
+├── docs/
+│   └── plans/           # Implementation plans
+├── install.sh           # Global installer (build + config patching)
 ├── codex-lint.sh        # Codex CLI wrapper script
 └── go.mod
 ```
