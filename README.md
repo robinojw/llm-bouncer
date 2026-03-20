@@ -94,6 +94,9 @@ The defaults are conservative. Adjust these constants in the source to match you
 | `MaxFileLines` | `checker/files.go` | 300 | Maximum lines per file |
 | `maxCyclomaticComplexity` | `checker/complexity.go` | 10 | Maximum cyclomatic complexity per function |
 
+## Bouncer in action
+<img width="821" height="765" alt="Screenshot 2026-03-19 at 4 57 50 PM" src="https://github.com/user-attachments/assets/313fd9d1-0250-488f-9b57-825dfb4a4d69" />
+
 ## Project structure
 
 ```
