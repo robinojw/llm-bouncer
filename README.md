@@ -3,6 +3,10 @@
 
 # llm-bouncer
 
+```bash
+curl -fsSL https://raw.githubusercontent.com/robinojw/llm-bouncer/main/scripts/install.sh | bash
+```
+
 A **language-agnostic** code quality gate for AI coding agents. Hooks into [Claude Code](https://docs.anthropic.com/en/docs/claude-code) and [Codex CLI](https://github.com/openai/codex) to catch style violations **before** they land, forcing the agent to fix its own output.
 
 ## Supported languages
@@ -43,6 +47,12 @@ For Codex CLI (which lacks native hook support), a wrapper script diffs changed 
 ## Quick start
 
 ### One-command install
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/robinojw/llm-bouncer/main/scripts/install.sh | bash
+```
+
+Or clone and run locally:
 
 ```bash
 git clone https://github.com/robinojw/llm-bouncer.git
